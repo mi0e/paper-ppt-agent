@@ -193,6 +193,10 @@ export function GeneratePage() {
     initialSettings.agentRuntime ?? "claude_code",
   );
   const [agentModel, setAgentModel] = useState(initialSettings.agentModel ?? "");
+  const [codexModel, setCodexModel] = useState(initialSettings.codexModel ?? "");
+  const [agentReasoningEffort, setAgentReasoningEffort] = useState<"default" | "low" | "medium" | "high" | "xhigh">(
+    initialSettings.agentReasoningEffort ?? "default",
+  );
   const [agentBaseUrl, setAgentBaseUrl] = useState("");
   const [agentCredential, setAgentCredential] = useState("");
   const [agentCredentialKind, setAgentCredentialKind] = useState<"api_key" | "auth_token">("api_key");
@@ -483,6 +487,8 @@ export function GeneratePage() {
         generationBackend,
         agentRuntime,
         agentModel,
+        codexModel,
+        agentReasoningEffort,
         canvasFormat,
         languageMode,
         customLanguage,
@@ -519,6 +525,8 @@ export function GeneratePage() {
     generationBackend,
     agentRuntime,
     agentModel,
+    codexModel,
+    agentReasoningEffort,
     enableDeepResearch,
     enableVisualCritic,
     maxCriticAttempts,
@@ -552,7 +560,7 @@ export function GeneratePage() {
       return;
     }
     const normalizedModel = model.trim();
-    const normalizedAgentModel = agentRuntime === "claude_code" ? agentModel.trim() : "";
+    const normalizedAgentModel = (agentRuntime === "codex" ? codexModel : agentModel).trim();
     const normalizedAgentBaseUrl = agentRuntime === "claude_code" ? agentBaseUrl.trim() : "";
     const normalizedAgentCredential = agentRuntime === "claude_code" ? agentCredential.trim() : "";
     if (generationBackend === "provider") {
@@ -567,14 +575,6 @@ export function GeneratePage() {
       };
       writeRoutingProfiles(profiles);
     }
-    const agentReasoningEffort =
-      agentRuntime === "codex"
-        ? enableDeepResearch || detailLevel === "very_high"
-          ? "xhigh"
-          : detailLevel === "high"
-            ? "high"
-            : undefined
-        : undefined;
     const nextJobId = await startGeneration({
       session_id: activeSessionId,
       instruction,
@@ -594,7 +594,7 @@ export function GeneratePage() {
         agent_config: generationBackend === "agent"
           ? {
               runtime: agentRuntime,
-              model: agentRuntime === "claude_code" ? normalizedAgentModel || undefined : undefined,
+              model: normalizedAgentModel || undefined,
               base_url: agentRuntime === "claude_code" ? normalizedAgentBaseUrl || undefined : undefined,
               api_key:
                 agentRuntime === "claude_code" && normalizedAgentBaseUrl && agentCredentialKind === "api_key"
@@ -607,7 +607,7 @@ export function GeneratePage() {
               allow_external_research: Boolean(researchConfig.arxiv_search_enabled || researchConfig.semantic_scholar_enabled || researchConfig.web_search_enabled),
               allow_deep_research: enableDeepResearch,
               enable_visual_qa: enableVisualCritic,
-              reasoning_effort: agentReasoningEffort,
+              reasoning_effort: agentReasoningEffort === "default" ? undefined : agentReasoningEffort,
               load_project_settings: true,
               reply_language: locale === "zh" ? "zh" : "en",
             }
@@ -806,6 +806,36 @@ export function GeneratePage() {
                     Codex
                   </button>
                 </div>
+                <label className="agent-model-field">
+                  <span>{t("generation.agent.model")}</span>
+                  <input
+                    type="text"
+                    list="generation-agent-model-options"
+                    value={agentRuntime === "codex" ? codexModel : agentModel}
+                    onChange={(event) => (agentRuntime === "codex" ? setCodexModel : setAgentModel)(event.target.value)}
+                    placeholder={t(agentRuntime === "codex" ? "generation.agent.modelPlaceholderCodex" : "generation.agent.modelPlaceholderClaude")}
+                  />
+                  {agentRuntime === "claude_code" && agentModelOptions.length > 0 ? (
+                    <datalist id="generation-agent-model-options">
+                      {agentModelOptions.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  ) : null}
+                </label>
+                <label className="agent-model-field">
+                  <span>{t("template.collab.agentReasoningEffort")}</span>
+                  <select
+                    value={agentReasoningEffort}
+                    onChange={(event) => setAgentReasoningEffort(event.target.value as typeof agentReasoningEffort)}
+                  >
+                    <option value="default">{t("generation.agent.reasoningDefault")}</option>
+                    <option value="low">{t("template.collab.agentReasoningLow")}</option>
+                    <option value="medium">{t("template.collab.agentReasoningMedium")}</option>
+                    <option value="high">{t("template.collab.agentReasoningHigh")}</option>
+                    <option value="xhigh">{t("template.collab.agentReasoningXhigh")}</option>
+                  </select>
+                </label>
                 {agentRuntime === "claude_code" ? (
                   <>
                     {agentBaseUrl.trim() ? (
@@ -819,23 +849,6 @@ export function GeneratePage() {
                         />
                       </label>
                     ) : null}
-                    <label className="agent-model-field">
-                      <span>{t("generation.agent.model")}</span>
-                      <input
-                        type="text"
-                        list="generation-agent-model-options"
-                        value={agentModel}
-                        onChange={(event) => setAgentModel(event.target.value)}
-                        placeholder={t("generation.agent.modelPlaceholderClaude")}
-                      />
-                      {agentModelOptions.length > 0 ? (
-                        <datalist id="generation-agent-model-options">
-                          {agentModelOptions.map((option) => (
-                            <option key={option} value={option} />
-                          ))}
-                        </datalist>
-                      ) : null}
-                    </label>
                     {agentBaseUrl.trim() ? (
                       <label className="agent-model-field">
                         <span>{t("generation.agent.apiKey")}</span>
