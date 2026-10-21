@@ -208,3 +208,75 @@ def test_server_restart_preserves_workspace_checkpoint(workspace, monkeypatch):
     assert restored_job.status == "error"
     assert restored_job.project_dir == str(project)
     assert agent._load_agent_session_id(project) == "before-crash"
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh"])
+def test_claude_launch_receives_model_and_effort(workspace, effort):
+    project, _, _ = workspace
+    session = agent.PersistentAgentSession(project, "claude_code", {
+        "model": "custom-model", "reasoning_effort": effort,
+    })
+    options = session._build_claude_options()
+    assert options.model == "custom-model"
+    assert options.effort == effort
+
+
+def test_claude_runtime_default_does_not_force_effort(workspace):
+    project, _, _ = workspace
+    options = agent.PersistentAgentSession(project, "claude_code", {})._build_claude_options()
+    assert options.effort is None
+
+
+def test_resume_restores_model_and_effort_without_credentials(workspace):
+    project, _, _ = workspace
+    original = {
+        "model": "custom-model", "reasoning_effort": "xhigh", "max_turns": 120,
+        "load_project_settings": False, "api_key": "secret", "auth_token": "secret",
+        "base_url": "https://private.example", "_research_env": {"TOKEN": "secret"},
+    }
+    saved = agent._persistable_agent_runtime_config(original)
+    assert set(saved) == {"model", "reasoning_effort", "max_turns", "load_project_settings"}
+    (project / "agent_task.json").write_text(json.dumps({"runtime_config": saved}))
+    restored = agent._agent_config_from_existing_task(project, "codex")
+    for key, value in saved.items():
+        assert restored[key] == value
+    assert "api_key" not in restored and "auth_token" not in restored
+
+
+def test_old_tasks_without_runtime_config_keep_defaults(workspace):
+    project, _, _ = workspace
+    restored = agent._agent_config_from_existing_task(project, "codex")
+    assert "model" not in restored and "reasoning_effort" not in restored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ["codex", "claude_code"])
+async def test_generate_forwards_model_and_effort_independently(workspace, monkeypatch, runtime):
+    from backend.api.schemas import GenerateRequest
+
+    project, job, manager = workspace
+    job.id = "job"
+    manager.create_job = lambda session_id: job
+    manager.get_session = lambda session_id: SimpleNamespace(
+        id="upload", file_path=project / "paper.pdf", source_type="pdf", sources=[],
+    )
+    scheduler = SimpleNamespace(submit=AsyncMock(return_value=0))
+    monkeypatch.setattr(generate, "get_scheduler", lambda: scheduler)
+    monkeypatch.setattr(agent, "agent_runtime_status", AsyncMock(return_value={"available": True}))
+    monkeypatch.setattr(agent, "agent_runtime_defaults", lambda runtime: {})
+    runner = AsyncMock()
+    monkeypatch.setattr(generate, "_run_generation_job", runner)
+    request = GenerateRequest.model_validate({
+        "session_id": "upload",
+        "options": {
+            "generation_backend": "agent", "detail_level": "very_high",
+            "enable_deep_research": True,
+            "agent_config": {"runtime": runtime, "model": "custom-model", "reasoning_effort": "low"},
+        },
+    })
+    result = await generate.generate_presentation(request)
+    assert result.job_id == "job"
+    await scheduler.submit.call_args.args[1]()
+    forwarded = runner.call_args.args[1].agent_config
+    assert forwarded["model"] == "custom-model"
+    assert forwarded["reasoning_effort"] == "low"

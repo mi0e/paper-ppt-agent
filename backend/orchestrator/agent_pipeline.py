@@ -998,6 +998,7 @@ class PersistentAgentSession:
                 else ["user"]
             ),
             model=agent_config.get("model") or None,
+            effort=agent_config.get("reasoning_effort") or None,
             skills=[_AGENT_SKILL_NAME, _RESEARCH_SKILL_NAME, _DEEP_RESEARCH_SKILL_NAME],
             env=_agent_runtime_env(
                 self._project_dir,
@@ -2334,6 +2335,8 @@ def _build_agent_task(project_dir: Path, source_target: Path, request: Any, agen
 
     task.update(
         {
+            # Persist only non-secret launch settings for future continuation.
+            "runtime_config": _persistable_agent_runtime_config(agent_config),
             "output_contract": {
                 "manuscript": "manuscript.md",
                 "design_spec": "design_spec.md",
@@ -4065,10 +4068,22 @@ Finish only after the revised SVGs validate and `agent_report.json` summarizes w
 """
 
 
+def _persistable_agent_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Launch settings required by a new/resumed session; never credentials."""
+    return {
+        key: config[key]
+        for key in ("model", "reasoning_effort", "max_turns", "load_project_settings")
+        if config.get(key) is not None
+    }
+
+
 def _agent_config_from_existing_task(project_dir: Path, runtime: str) -> dict[str, Any]:
     task = _read_agent_task(project_dir)
     policy = task.get("agent_policy") if isinstance(task.get("agent_policy"), dict) else {}
+    saved = task.get("runtime_config")
+    restored = _persistable_agent_runtime_config(saved) if isinstance(saved, dict) else {}
     return {
+        **restored,
         "runtime": runtime,
         "allow_external_research": bool(policy.get("allow_external_research")),
         "allow_deep_research": bool(policy.get("allow_deep_research")),

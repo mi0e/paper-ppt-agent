@@ -38,6 +38,8 @@ export interface PresentationSettingsDraft {
   generationBackend?: "provider" | "agent";
   agentRuntime?: "claude_code" | "codex";
   agentModel?: string;
+  codexModel?: string;
+  agentReasoningEffort?: "default" | "low" | "medium" | "high" | "xhigh";
   canvasFormat?: string;
   languageMode?: "zh" | "en" | "custom";
   customLanguage?: string;
