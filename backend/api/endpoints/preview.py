@@ -169,7 +169,7 @@ async def get_preview(job_id: str) -> PreviewResponse:
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
-    normalized_status = "complete" if job.output_path and Path(job.output_path).exists() else job.status
+    normalized_status = job.status
     return await _build_preview_response(job_id, Path(job.project_dir) if job.project_dir else None, job.output_path, normalized_status)
 
 
@@ -371,7 +371,7 @@ async def delete_preview_slide(job_id: str, slide_index: int) -> PreviewResponse
         _renumber_svg_slide_assets(project_dir, _editable_slide_files(project_dir)[0])
     except OSError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete slide: {exc}") from exc
-    normalized_status = "complete" if job.output_path and Path(job.output_path).exists() else job.status
+    normalized_status = job.status
     return await _build_preview_response(job_id, project_dir, job.output_path, normalized_status)
 
 

@@ -1,7 +1,5 @@
 """Job status endpoint."""
 
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from backend.api.schemas import CancelJobResponse, JobStatus
@@ -22,7 +20,8 @@ async def get_job_status(job_id: str) -> JobStatus:
             detail="Job not found.",
         )
 
-    normalized_status = "complete" if job.output_path and Path(job.output_path).exists() else job.status
+    # A saved/previous export does not mean the current generation finished.
+    normalized_status = job.status
 
     return JobStatus(
         status=normalized_status,

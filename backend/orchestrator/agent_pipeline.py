@@ -335,6 +335,8 @@ class PersistentAgentSession:
     @session_id.setter
     def session_id(self, value: str | None) -> None:
         self._session_id = value
+        if value:
+            _save_agent_session(self._project_dir, value)
 
     def __aiter__(self) -> PersistentAgentSession:
         return self
@@ -789,7 +791,7 @@ class PersistentAgentSession:
                     self._resume_session_id = None
                 else:
                     thread = await codex.thread_start(**thread_kwargs)
-                self._session_id = thread.id
+                self.session_id = thread.id
                 self._emit(
                     AgentProgressEvent(
                         "agent",
@@ -1015,9 +1017,9 @@ class PersistentAgentSession:
             subtype = getattr(message, "subtype", None)
             if subtype == "init":
                 data = getattr(message, "data", None) or {}
-                sid = data.get("session_id")
+                sid = data.get("session_id") if isinstance(data, dict) else None
                 if isinstance(sid, str) and sid:
-                    self._session_id = sid
+                    self.session_id = sid
 
 
 def _is_false_success_error(exc: BaseException) -> bool:
@@ -1136,7 +1138,8 @@ def _save_agent_session(project_dir: Path, session_id: str) -> None:
     path = _agent_session_path(project_dir)
     payload = {"session_id": session_id}
     try:
-        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        from backend.runtime.io import _write_text_atomic
+        _write_text_atomic(path, json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     except OSError:
         logger.warning("Failed to persist agent session id to %s", path)
 
@@ -1148,7 +1151,7 @@ def _load_agent_session_id(project_dir: Path) -> str | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        sid = data.get("session_id")
+        sid = data.get("session_id") if isinstance(data, dict) else None
         return str(sid) if isinstance(sid, str) and sid else None
     except (OSError, json.JSONDecodeError):
         return None
@@ -4035,11 +4038,13 @@ Finish only after all required SVGs validate and `agent_report.json` summarizes 
 
 def _build_feedback_runtime_prompt(project_dir: Path, feedback: str) -> str:
     skill_path = str(project_dir / "skills" / _AGENT_SKILL_NAME / "SKILL.md")
-    return f"""Use the `{_AGENT_SKILL_NAME}` skill to revise the existing PowerPoint deck in this same workspace.
+    return f"""Use the `{_AGENT_SKILL_NAME}` skill to continue or revise the PowerPoint deck in this same workspace.
 
 Workspace contract:
 - First read `agent_task.json`, then read `{skill_path}` if needed.
-- Read the existing `manuscript.md`, `design_spec.md`, current `svg_output/*.svg`, and the newest files in `agent_feedback/`.
+- Inspect all existing artifacts before doing any work. Read `manuscript.md`, `design_spec.md`, current `svg_output/*.svg`, and the newest files in `agent_feedback/` when present.
+- The previous run may have disconnected before finishing. Reuse completed source analysis, manuscript, design, and valid slides. Complete only missing or invalid artifacts; do not assume the deck is already complete.
+- If no manuscript or design exists yet, build the missing stage from the sources and requirements in `agent_task.json`, then continue generation.
 - Apply this latest user feedback: {feedback.strip()}
 - Do not call this application's legacy provider pipeline or ask for external model API keys.
 - Do not regenerate the whole deck from scratch unless the feedback truly requires structural changes.

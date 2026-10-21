@@ -23,7 +23,7 @@ async def download_presentation(job_id: str) -> FileResponse:
     job = session_manager.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-    if job.status != "complete" or not job.output_path:
+    if job.status not in {"complete", "error", "cancelled"} or not job.output_path:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Presentation is not ready yet.",
@@ -73,6 +73,12 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
     if project_dir is None or not project_dir.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
+    if job.status not in {"complete", "error", "cancelled"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Stop generation before re-exporting saved slides.",
+        )
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     canvas_format = job.canvas_format or "ppt169"
     output_path = project_dir / "exports" / f"presentation_{timestamp}.pptx"
@@ -89,7 +95,12 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
         warnings: list[str] = []
     else:
         sync_svg_output_assets_to_final(project_dir)
-        svg_files = get_svg_files(project_dir, "final") or get_svg_files(project_dir, "output")
+        # An interrupted run can leave svg_final stale or only partly populated.
+        # Export saved source slides in that case rather than silently losing pages.
+        if job.status in {"error", "cancelled"}:
+            svg_files = get_svg_files(project_dir, "output") or get_svg_files(project_dir, "final")
+        else:
+            svg_files = get_svg_files(project_dir, "final") or get_svg_files(project_dir, "output")
         if not svg_files:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -108,6 +119,8 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
             canvas_format=canvas_format,
             notes=notes,
         )
+        await aoffload(sanitize_pptx_file, output_path)
+        _raise_if_invalid_pptx(output_path)
         fallback_slides = _read_fallback_slides(output_path)
         warnings = (
             [f"Slides {', '.join(map(str, fallback_slides))} used raster fallback export."]
@@ -115,17 +128,21 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
             else []
         )
 
+    recovered = job.status in {"error", "cancelled"}
+    if recovered:
+        warnings.append("Exported saved slides only; the interrupted generation may still be incomplete.")
     session_manager.update_job(
         job_id,
-        status="complete",
-        message="Presentation re-exported",
+        # Exporting a partial deck must not mark interrupted generation complete.
+        status=job.status if recovered else "complete",
+        message="Saved slides exported; generation can be continued" if recovered else "Presentation re-exported",
         output_path=str(output_path),
-        error=None,
+        error=job.error if recovered else None,
     )
 
     return ReexportResponse(
         job_id=job_id,
-        status="complete",
+        status=job.status,
         output_path=str(output_path),
         fallback_slides=fallback_slides,
         warnings=warnings,

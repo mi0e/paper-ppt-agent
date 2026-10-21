@@ -476,15 +476,16 @@ async def send_agent_generation_feedback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Feedback is only supported for Agent generation jobs.",
         )
-    if job.status in {"error", "cancelled"}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Feedback cannot resume a failed or cancelled Agent job.",
-        )
     if job.status == "pausing":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Wait for the Agent to finish pausing before sending guidance.",
+        )
+
+    if not (Path(job.project_dir) / "agent_task.json").is_file():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent workspace is incomplete. Start a new generation task.",
         )
 
     text = payload.message.strip()
@@ -570,20 +571,13 @@ async def send_agent_generation_feedback(
             )
         return AgentFeedbackResponse(job_id=job_id, status="injected", path=str(target))
 
-    if job.status == "complete":
+    if job.status in {"complete", "error", "cancelled"}:
         scheduler = get_scheduler()
         runtime = _agent_runtime_from_job(job)
         project_dir = Path(job.project_dir)
         # Load persisted session_id for context continuity.
         from backend.orchestrator.agent_pipeline import _load_agent_session_id
         prev_session_id = _load_agent_session_id(project_dir)
-        session_manager.update_job(
-            job_id,
-            status="pending",
-            message="Queued for Agent feedback revision",
-            progress=0.05,
-            error=None,
-        )
 
         async def _runner() -> None:
             await _run_agent_feedback_job(
@@ -597,27 +591,23 @@ async def send_agent_generation_feedback(
 
         try:
             await scheduler.submit(job_id, _runner, priority=5)
+            session_manager.update_job(
+                job_id,
+                status="pending",
+                message="Queued to continue Agent task",
+                progress=min(job.progress, 0.75),
+                error=None,
+            )
             return AgentFeedbackResponse(job_id=job_id, status="queued", path=str(target))
-        except RuntimeError as exc:
-            session_manager.update_job(
-                job_id,
-                status="error",
-                message=str(exc),
-                error=str(exc),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
         except (QueueFull, SchedulerDraining) as exc:
-            session_manager.update_job(
-                job_id,
-                status="error",
-                message=str(exc),
-                error=str(exc),
-            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
                 detail=str(exc),
             ) from exc
 
