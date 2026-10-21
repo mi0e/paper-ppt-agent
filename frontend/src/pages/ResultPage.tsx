@@ -138,7 +138,7 @@ export function ResultPage() {
   }, [activeJobId, jobId, liveJob, liveResult]);
 
   useEffect(() => {
-    if (!jobId || !isAgentResult || resultRunStatus !== "complete") {
+    if (!jobId || !isAgentResult || !["complete", "error", "cancelled"].includes(resultRunStatus ?? "")) {
       return;
     }
     if (requestedAgentHistoryForJob.current === jobId) {
@@ -382,7 +382,9 @@ export function ResultPage() {
       setReexportNotice(
         fallbackSlides.length
           ? t("result.reexportFallback").replace("{slides}", fallbackSlides.join(", "))
-          : t("result.reexportSuccess"),
+          : response.status === "error" || response.status === "cancelled"
+            ? t("result.reexportPartial")
+            : t("result.reexportSuccess"),
       );
       setJob((current) =>
         current
@@ -390,7 +392,7 @@ export function ResultPage() {
               ...current,
               status: response.status,
               output_path: response.output_path,
-              error: null,
+              error: response.status === "complete" ? null : current.error,
             }
           : {
               status: response.status,

@@ -1247,9 +1247,9 @@ export function GenerationAgentConsole({
     }
   }, [activeChannel, subagents]);
 
-  const submit = async () => {
-    const text = draft.trim();
-    if (!text || !jobId || (terminal && !allowSendWhenTerminal)) return;
+  const submit = async (message = draft) => {
+    const text = message.trim();
+    if (!text || !jobId || sending || job?.status === "pausing" || (terminal && !allowSendWhenTerminal)) return;
     setDraft("");
     setSending(true);
     try {
@@ -1322,6 +1322,16 @@ export function GenerationAgentConsole({
             </GenerationTooltip>
           </div>
           <div className="generation-agent-actions">
+            {allowSendWhenTerminal && jobId && (job?.status === "error" || job?.status === "cancelled") ? (
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={sending}
+                onClick={() => void submit(t("generation.agent.resumePrompt"))}
+              >
+                {t("generation.agent.resume")}
+              </button>
+            ) : null}
             {canStop ? (
               <GenerationTooltip content={stopLabel}>
                 <span className="generation-tooltip-trigger">
